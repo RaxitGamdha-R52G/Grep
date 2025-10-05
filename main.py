@@ -1,9 +1,10 @@
+import os
 import sys
 
 class RegexEngine:
     """
     A simple regular expression engine that supports a subset of regex features,
-    including literals, character classes, escape sequences (\\d, \\w), quantifiers (+, ?),
+    including literals, character classes, escape sequences (\\d, \\w), quantifiers (+, ?, *),
     the wildcard (.), groups for alternation (cat|dog), quantifiers on groups,
     multiple and nested backreferences (\\1, \\2), and anchors (^, $).
 
@@ -206,7 +207,7 @@ class RegexEngine:
         # Parse the next expression and identify any following quantifier.
         expr_type, expr_content, expr_len, negated = self.parse_expression(pattern)
         quantifier = None
-        if expr_len < len(pattern) and pattern[expr_len] in "+?":
+        if expr_len < len(pattern) and pattern[expr_len] in "+?*":
             quantifier = pattern[expr_len]
         rest_of_pattern = pattern[expr_len + (1 if quantifier else 0):]
 
@@ -321,6 +322,18 @@ class RegexEngine:
                 yield rest_len, rest_counter
             return
 
+        # Case 4: '*' quantifier (zero or more).
+        if quantifier == "*":
+            # Greedily find the longest possible sequence of matches.
+            reps = 0
+            while reps < len(input_line) and match_fn(input_line[reps]):
+                reps += 1
+            # Backtrack from longest to shortest (including zero).
+            for curr_reps in range(reps, -1, -1):
+                for rest_len, rest_counter in self.match_inner(input_line[curr_reps:], rest_of_pattern, group_counter):
+                    yield curr_reps + rest_len, rest_counter
+            return
+
     # ---------- Top-Level Matching Logic ----------
     def strip_anchors(self, pattern: str) -> tuple:
         """Checks for '^' and '$' anchors, removes them, and returns boolean flags."""
@@ -381,13 +394,37 @@ class Main:
         """Initializes the main application controller."""
         self.pattern = None
         self.input_line = None
+        self.fileNames = None
 
-    def parse_arguments(self) -> str:
+    def parse_arguments(self) -> tuple:
         """Parses the regex pattern from the command-line arguments."""
-        if len(sys.argv) < 3 or sys.argv[1] != "-E":
-            print("Expected usage: ./your_program.sh -E <pattern>")
+        recursive = False
+        if len(sys.argv) >= 5 and sys.argv[1] == '-r' and sys.argv[2] == '-E':
+            recursive = True
+            pattern = sys.argv[3]
+            target = sys.argv[4]
+            return pattern, target, recursive
+        elif len(sys.argv) < 3 or sys.argv[1] != "-E":
+            print("Expected usage: ./your_program.sh [-r] -E <pattern> [<file1> <file2> ...]")
             sys.exit(1)
-        return sys.argv[2]
+        else:
+            pattern = sys.argv[2]
+            filenames = sys.argv[3:] if len(sys.argv) > 3 else None
+            return pattern, filenames, recursive
+
+    def recursive_find_files(self, dir_path: str, relative_base: str, files_list: list[str]) -> None:
+        """Manually recurse through directories to find all file paths (relative to base)."""
+        try:
+            for entry in os.listdir(dir_path):
+                full_path = os.path.join(dir_path, entry)
+                if os.path.isfile(full_path):
+                    rel_path = os.path.relpath(full_path, relative_base)
+                    files_list.append(rel_path)
+                elif os.path.isdir(full_path):
+                    self.recursive_find_files(full_path, relative_base, files_list)
+        except PermissionError:
+            # Ignore permission errors (e.g., can't read some dirs), as per common grep behavior
+            pass
 
     def read_input(self) -> str:
         """Reads the input string from standard input."""
@@ -413,15 +450,59 @@ class Main:
 
     def run(self):
         """The main execution flow of the program."""
-        self.pattern = self.parse_arguments()
-        self.input_line = self.read_input()
-
+        result = self.parse_arguments()
+        self.pattern = result[0]
         engine = RegexEngine(self.pattern)
-        print(self) # Print debug info.
-        matched = engine.match_pattern(self.input_line)
-        self.output_result(matched)
 
+        if len(result) == 3 and result[2]:  # Recursive mode
+            target_dir = result[1]
+            if not os.path.isdir(target_dir):
+                print(f"Error: {target_dir} is not a directory")
+                sys.exit(1)
+            # Set relative base to the parent of target_dir to include the directory name in paths
+            abs_target = os.path.abspath(target_dir)
+            relative_base = os.path.dirname(abs_target) or '.'
+            file_paths = []
+            self.recursive_find_files(abs_target, relative_base, file_paths)
+            # Process each found file
+            any_matched = False
+            for rel_path in file_paths:
+                full_path = os.path.join(relative_base, rel_path)
+                try:
+                    with open(full_path, 'r') as file:
+                        for original_line in file:
+                            stripped_line = original_line.rstrip('\n')
+                            if engine.match_pattern(stripped_line):
+                                sys.stdout.write(f"{rel_path}:{stripped_line}\n")
+                                any_matched = True
+                except (IOError, PermissionError):
+                    # Skip unreadable files, as per common behavior
+                    continue
+            sys.exit(0 if any_matched else 1)
+        elif isinstance(result[1], list) and result[1] is not None:
+            # Multi-file mode (non-recursive)
+            self.fileNames = result[1]
+            # File mode: process each file line by line (multi-file multi-line support)
+            any_matched = False
+            for fileName in self.fileNames:
+                with open(fileName, 'r') as file:
+                    for original_line in file:
+                        stripped_line = original_line.rstrip('\n')
+                        if engine.match_pattern(stripped_line):
+                            # For single file only
+                            if(len(self.fileNames) == 1):
+                                sys.stdout.write(original_line)
+                            # For multiple files
+                            else:
+                                sys.stdout.write(f"{fileName}:{original_line}")
+                            any_matched = True
+            sys.exit(0 if any_matched else 1)
+        else:
+            # Stdin mode: keep as single-line (legacy)
+            self.input_line = self.read_input()
+            print(self)  # Print debug info.
+            matched = engine.match_pattern(self.input_line)
+            self.output_result(matched)
 
 if __name__ == "__main__":
     Main().run()
-
