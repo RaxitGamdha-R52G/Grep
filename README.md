@@ -18,7 +18,8 @@ This engine supports a useful subset of common regular expression syntax:
 
 ### Quantifiers
 - `+` → One or more.  
-- `?` → Zero or one.  
+- `?` → Zero or one.
+- `*` → Zero or more.
 
 ### Character Classes
 - `[abc]` → Matches any of `a`, `b`, or `c`.  
@@ -40,6 +41,30 @@ This engine supports a useful subset of common regular expression syntax:
 - `^` → Asserts the start of the string.  
 - `$` → Asserts the end of the string.  
 
+### File Search
+- Single/multi-line file processing (line-by-line matching).  
+- Multi-file support with `<filename>:` prefix.  
+- Recursive directory traversal (`-r` flag) with relative paths and `<relpath>:` prefix.  
+- Exits with code 0 on matches, 1 otherwise; clean output.
+
+#### Syntax
+```bash
+python main.py -r -E "<pattern>" [<file1> <file2> ...]
+```
+```bash
+# Search a single file
+python main.py -E "appl.*" fruits.txt
+
+# Search multiple files (with filename prefix)
+python main.py -E "vegetable" fruits.txt veggies.txt
+
+# Recursive search in directory
+python main.py -r -E ".*er" dir/
+
+# Output example:
+# dir/fruits.txt:strawberry
+# dir/subdir/vegetables.txt:celery
+```
 ---
 
 ## 🚀 How to Use
@@ -71,7 +96,9 @@ The program will print a **success** or **failure** message and exit with:
 The engine is built on two primary components:
 
 ### Main Class
-- Handles the command-line interface (CLI).  
+- Handles the command-line interface (CLI): Parses flags (-E, -r), optional filenames/directories, and input (stdin or files).
+- Supports line-by-line processing for multi-line files/directories.
+- Implements recursive file discovery (manual DFS traversal) for -r.  
 - Parses arguments and reads input.  
 - Acts as the **entry point** and orchestrates the matching process.  
 
@@ -80,14 +107,15 @@ The engine is built on two primary components:
 - Implements a **Recursive Descent Parser** that parses and evaluates the pattern *on-the-fly* against the input string.  
 - Uses **recursive backtracking with Python generators**.  
 
-The core function, `match_inner`, is a **generator** that yields all possible successful match lengths for a given pattern and position.  
-This approach allows the engine to explore ambiguous paths (like those involving `|` or `+`) without complex state-management code.  
+The core function, `match_inner`, is a **generator** that yields all possible successful match lengths for a given pattern and position.
 
 ---
 
 ## 🔮 Future Improvements
 
-- **Additional Quantifiers**: Implement `*` (zero or more) and `{m,n}` curly brace quantifiers.  
+- **Additional Quantifiers**: Implement `{m,n}` and lazy quantifiers (e.g., +?).  
 - **Performance Optimization**: Introduce memoization (caching) to avoid redundant computations.  
 - **Non-Capturing Groups**: Add support for `(?: ... )`.  
 - **Lookarounds**: Implement positive and negative lookaheads/lookbehinds.
+- **Binary Files**: Handle non-text files gracefully (e.g., skip or warn).
+- **More Escapes**: Add \s, \b, etc.
